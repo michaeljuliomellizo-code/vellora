@@ -210,6 +210,7 @@ export default function AgendaView({ ctx }: Props) {
   }
 
   const dayName = dayFilter === "todas" ? "todas las fechas" : relativeDay(`${dayFilter}T12:00:00`);
+  const hoy = new Intl.DateTimeFormat('en-CA').format(new Date()); // "2026-11-03"
 
   return (
     <div className="vr-stack">
@@ -242,13 +243,10 @@ export default function AgendaView({ ctx }: Props) {
 
       <div className="vr-card">
         <div className="vr-form" style={{ marginBottom: 16 }}>
+          
           <select value={dayFilter} onChange={(e) => setDayFilter(e.target.value)} style={{ maxWidth: 200 }}>
             <option value="todas">Todas las fechas</option>
-            {days.map((d) => (
-              <option key={d} value={d}>
-                {relativeDay(`${d}T12:00:00`)}
-              </option>
-            ))}
+            <option value={hoy}>Hoy</option>
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ maxWidth: 180 }}>
             <option value="todas">Todos los estados</option>
