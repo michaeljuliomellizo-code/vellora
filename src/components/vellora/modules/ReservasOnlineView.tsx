@@ -281,7 +281,8 @@ export default function ReservasOnlineView({ ctx }: { ctx: OrganizationContext }
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const publicUrl = `${origin}/r/${cfg.slug || "mi-salon"}`;
-  const slugOK = /^[a-z0-9](-?[a-z0-9])*$/.test(cfg.slug.trim());
+  /* FIX: acepta guiones (-) y guiones bajos (_), ej. salon_michael */
+  const slugOK = /^[a-z0-9]([-_]?[a-z0-9])*$/.test(cfg.slug.trim());
 
   const tabs: { key: Tab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
     { key: "resumen", label: "Resumen", icon: TrendingUp },
@@ -552,7 +553,7 @@ export default function ReservasOnlineView({ ctx }: { ctx: OrganizationContext }
                 </select>
               </Field>
             </FormGrid>
-            {!slugOK && <div className="vr-alert vr-alert-warning"><span>Usa solo letras minúsculas, números y guiones (ej. bella-esencia).</span></div>}
+            {!slugOK && <div className="vr-alert vr-alert-warning"><span>Usa solo letras minúsculas, números, guiones o guiones bajos (ej. bella-esencia o salon_michael).</span></div>}
           </SectionCard>
 
           <SectionCard title="Información que ve la clienta">

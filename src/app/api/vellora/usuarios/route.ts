@@ -32,9 +32,14 @@ async function findUserIdByEmail(admin: SupabaseClient, email: string): Promise<
   for (let page = 1; page <= 25; page++) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
     if (error) return null;
-    const hit = data.users.find((u) => (u.email ?? "").toLowerCase() === target);
+    /* FIX TS2339: algunas versiones de supabase-js resuelven el genérico de
+       listUsers() como never[], y data.users deja de tener email.
+       Se normaliza la respuesta a una lista mínima tipada a mano. */
+    const users =
+      ((data as unknown as { users?: Array<{ id: string; email?: string | null }> }).users) ?? [];
+    const hit = users.find((u) => (u.email ?? "").toLowerCase() === target);
     if (hit) return hit.id;
-    if (data.users.length < 200) return null;
+    if (users.length < 200) return null;
   }
   return null;
 }

@@ -1,8 +1,12 @@
 "use client";
 
-/* VelloRa ERP — Configuración: organización, usuarios, perfiles y planes.
+/* VelloRa ERP — Configuración: organización (editable), sucursales por plan,
+   usuarios, perfiles y planes.
    Porta y corrige los módulos PerfilesClient y UsuariosClient del proyecto original,
-   y añade el sistema de planes (Esencial/Profesional/Elite) con validación de restricciones. */
+   añade el sistema de planes (Esencial/Profesional/Elite) con validación de restricciones,
+   y la v15: edición de los datos de la organización, gestión de sucursales con límite
+   del plan (esencial=1 · profesional=3 · elite=ilimitadas) y creación de usuarios con
+   correo, contraseña y perfil vía /api/vellora/usuarios (service-role en servidor). */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, Plus, ShieldCheck, Users as UsersIcon, CreditCard, Building2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
@@ -50,6 +54,40 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
   const [active, setActive] = useState(true);
   const [savingUser, setSavingUser] = useState(false);
 
+  /* ————— General: datos de la organización (editable, RPC v15) ————— */
+  const [orgName, setOrgName] = useState(ctx.organization.name ?? "");
+  const [orgLegal, setOrgLegal] = useState(ctx.organization.legal_name ?? "");
+  const [orgTax, setOrgTax] = useState(ctx.organization.tax_id ?? "");
+  const [orgPhone, setOrgPhone] = useState(ctx.organization.phone ?? "");
+  const [orgEmail, setOrgEmail] = useState(ctx.organization.email ?? "");
+  const [orgAddress, setOrgAddress] = useState(ctx.organization.address ?? "");
+  const [orgCity, setOrgCity] = useState(ctx.organization.city ?? "");
+  const [savingOrg, setSavingOrg] = useState(false);
+  const [orgError, setOrgError] = useState("");
+  const [orgNotice, setOrgNotice] = useState("");
+
+  /* ————— General: sucursales con límite del plan (RPC v15) ————— */
+  const [branchesAll, setBranchesAll] = useState<Branch[]>([]);
+  const [showBranchModal, setShowBranchModal] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [bName, setBName] = useState("");
+  const [bAddress, setBAddress] = useState("");
+  const [bPhone, setBPhone] = useState("");
+  const [bActive, setBActive] = useState(true);
+  const [savingBranch, setSavingBranch] = useState(false);
+  const [branchError, setBranchError] = useState("");
+  const [branchNotice, setBranchNotice] = useState("");
+
+  /* ————— Crear usuario (POST /api/vellora/usuarios, service-role en el servidor) ————— */
+  const [showCreate, setShowCreate] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [cuEmail, setCuEmail] = useState("");
+  const [cuPassword, setCuPassword] = useState("");
+  const [cuName, setCuName] = useState("");
+  const [cuPhone, setCuPhone] = useState("");
+  const [cuProfileId, setCuProfileId] = useState("");
+  const [cuBranchId, setCuBranchId] = useState("");
+
   /* ————— Perfiles ————— */
   const [modules, setModules] = useState<Module[]>([]);
   const [permissions, setPermissions] = useState<RoleModulePermission[]>([]);
@@ -66,15 +104,19 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
   const [plans, setPlans] = useState<Plan[]>([]);
   const [usage, setUsage] = useState<{ professionals: number; branches: number; monthlyAppointments: number } | null>(null);
   const [planValidate, setPlanValidate] = useState<{ ok: boolean; label: string; detail: string }[]>([]);
+  const [switchingPlan, setSwitchingPlan] = useState<string | null>(null);
+  const [planError, setPlanError] = useState("");
+  const [planNotice, setPlanNotice] = useState("");
 
   const loadAll = useCallback(async () => {
     const sb = supabaseBrowser();
     setLoadingUsers(true);
     try {
-      const [mem, rol, brn, mod, perm, pln] = await Promise.all([
+      const [mem, rol, brn, brnAll, mod, perm, pln] = await Promise.all([
         sb.rpc("vellora_list_members", { p_organization_id: ctx.organizationId }),
         sb.from("organization_roles").select("*").eq("organization_id", ctx.organizationId).order("name"),
         sb.rpc("vellora_list_member_branches", { p_organization_id: ctx.organizationId }),
+        sb.rpc("vellora_list_branches", { p_organization_id: ctx.organizationId }),
         sb.from("vellora_modules").select("*").eq("active", true).order("name"),
         sb.from("role_module_permissions").select("*"),
         sb.from("vellora_plans").select("*").eq("active", true),
@@ -87,6 +129,9 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
       else setRoles(((rol.data ?? []) as unknown) as Role[]);
 
       if (!brn.error) setBranches(((brn.data ?? []) as unknown) as Branch[]);
+      /* Sucursales para la pestaña General (activas e inactivas, RPC del v15).
+         Si la RPC aún no existe (falta el SQL v15) se conserva ctx.branches. */
+      if (!brnAll.error) setBranchesAll(((brnAll.data ?? []) as unknown) as Branch[]);
 
       if (!mod.error) setModules(((mod.data ?? []) as unknown) as Module[]);
       if (!perm.error) setPermissions(((perm.data ?? []) as unknown) as RoleModulePermission[]);
@@ -152,6 +197,197 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  /* ————— Planes: elegir / cambiar de plan —————
+     organization_subscriptions.organization_id es UNIQUE: el upsert inserta
+     la primera suscripción de la organización o actualiza el plan existente. */
+  async function choosePlan(p: Plan) {
+    setPlanError("");
+    setPlanNotice("");
+    setSwitchingPlan(p.id);
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb
+        .from("organization_subscriptions")
+        .upsert(
+          {
+            organization_id: ctx.organizationId,
+            plan_id: p.id,
+            status: "active",
+            starts_at: new Date().toISOString(),
+            ends_at: null,
+          },
+          { onConflict: "organization_id" }
+        );
+      if (error) {
+        setPlanError(`No se pudo cambiar el plan: ${error.message}`);
+        return;
+      }
+      setPlanNotice(`Plan cambiado a ${p.name}. Actualizando…`);
+      setTimeout(() => window.location.reload(), 600);
+    } finally {
+      setSwitchingPlan(null);
+    }
+  }
+
+  /* ————— General: guardar datos de la organización (RPC del v15) ————— */
+  async function saveOrganization() {
+    if (!orgName.trim()) {
+      setOrgError("El nombre de la organización es obligatorio.");
+      return;
+    }
+    if (orgEmail.trim() && !/^\S+@\S+\.\S+$/.test(orgEmail.trim())) {
+      setOrgError("El correo de la organización no tiene un formato válido.");
+      return;
+    }
+    setSavingOrg(true);
+    setOrgError("");
+    setOrgNotice("");
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb.rpc("vellora_update_organization", {
+        p_organization_id: ctx.organizationId,
+        p_name: orgName.trim(),
+        p_legal_name: orgLegal.trim() || null,
+        p_tax_id: orgTax.trim() || null,
+        p_phone: orgPhone.trim() || null,
+        p_email: orgEmail.trim() || null,
+        p_address: orgAddress.trim() || null,
+        p_city: orgCity.trim() || null,
+      });
+      if (error) {
+        setOrgError(`No se pudieron guardar los datos: ${error.message}`);
+        return;
+      }
+      setOrgNotice("Datos de la organización guardados. Actualizando pantalla…");
+      setTimeout(() => window.location.reload(), 800);
+    } finally {
+      setSavingOrg(false);
+    }
+  }
+
+  /* ————— General: sucursales (RPC del v15, límite del plan en el servidor) ————— */
+  async function refreshBranches() {
+    const sb = supabaseBrowser();
+    const { data, error } = await sb.rpc("vellora_list_branches", { p_organization_id: ctx.organizationId });
+    if (!error) setBranchesAll(((data ?? []) as unknown) as Branch[]);
+  }
+
+  function openBranchModal(b: Branch | null) {
+    setEditingBranch(b);
+    setBName(b?.name ?? "");
+    setBAddress(b?.address ?? "");
+    setBPhone(b?.phone ?? "");
+    setBActive(b?.active ?? true);
+    setBranchError("");
+    setBranchNotice("");
+    setShowBranchModal(true);
+  }
+
+  async function saveBranch() {
+    if (!bName.trim()) {
+      setBranchError("El nombre de la sucursal es obligatorio.");
+      return;
+    }
+    setSavingBranch(true);
+    setBranchError("");
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb.rpc("vellora_save_branch", {
+        p_organization_id: ctx.organizationId,
+        p_branch_id: editingBranch?.id ?? null,
+        p_name: bName.trim(),
+        p_address: bAddress.trim() || null,
+        p_phone: bPhone.trim() || null,
+        p_active: editingBranch ? bActive : null,
+      });
+      if (error) {
+        setBranchError(error.message);
+        return;
+      }
+      setShowBranchModal(false);
+      setBranchNotice(editingBranch ? "Sucursal actualizada." : `Sucursal "${bName.trim()}" creada.`);
+      await refreshBranches();
+    } finally {
+      setSavingBranch(false);
+    }
+  }
+
+  async function toggleBranchActive(b: Branch) {
+    setBranchError("");
+    setBranchNotice("");
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb.rpc("vellora_set_branch_active", {
+        p_organization_id: ctx.organizationId,
+        p_branch_id: b.id,
+        p_active: !b.active,
+      });
+      if (error) {
+        setBranchError(error.message);
+        return;
+      }
+      setBranchNotice(`Sucursal "${b.name}" ${b.active ? "desactivada" : "activada"}.`);
+      await refreshBranches();
+    } finally {
+      setSavingBranch(false);
+    }
+  }
+
+  /* ————— Usuarios: crear (usa la API de servidor con service-role) ————— */
+  async function createUser() {
+    if (!cuEmail.trim() || !cuPassword || !cuProfileId) {
+      setUserError("Para crear el usuario completa correo, contraseña y perfil.");
+      return;
+    }
+    if (cuPassword.length < 8) {
+      setUserError("La contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+    setCreatingUser(true);
+    setUserError("");
+    setUserNotice("");
+    try {
+      const sb = supabaseBrowser();
+      const { data: ses } = await sb.auth.getSession();
+      /* Tipado defensivo: el cliente demo devuelve una sesión reducida sin access_token. */
+      const token =
+        ((ses as unknown as { session?: { access_token?: string } | null })?.session?.access_token) ?? "";
+      const res = await fetch("/api/vellora/usuarios", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          organization_id: ctx.organizationId,
+          email: cuEmail.trim(),
+          password: cuPassword,
+          full_name: cuName.trim(),
+          phone: cuPhone.trim() || null,
+          profile_id: cuProfileId,
+          branch_id: cuBranchId || null,
+        }),
+      });
+      const out = (await res.json().catch(() => ({}))) as { error?: string; linked?: boolean };
+      if (!res.ok) {
+        setUserError(out.error ?? `No fue posible crear el usuario (HTTP ${res.status}).`);
+        return;
+      }
+      setUserNotice(
+        out.linked
+          ? "El correo ya existía: se vinculó a la organización con el perfil elegido (sin cambiar su clave)."
+          : "Usuario creado y vinculado a la organización. Ya puede iniciar sesión con el correo y la contraseña definidos."
+      );
+      setShowCreate(false);
+      setCuEmail(""); setCuPassword(""); setCuName(""); setCuPhone(""); setCuProfileId(""); setCuBranchId("");
+      await loadAll();
+    } catch (e) {
+      setUserError(e instanceof Error ? e.message : "Error de red al crear el usuario.");
+    } finally {
+      setCreatingUser(false);
+    }
+  }
 
   /* ————— Perfiles: helpers ————— */
   function openNewRole() {
@@ -296,6 +532,13 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
 
   const adminOnly = roleKey === "owner" || roleKey === "administracion";
 
+  /* ————— General: derivados de sucursales y plan ————— */
+  const branchList = branchesAll.length ? branchesAll : ctx.branches;
+  const planName = ctx.subscription?.plan?.name ?? "actual";
+  const maxBranches = resolvePlanLimits(ctx.subscription?.plan).max_branches;
+  const activeBranches = branchList.filter((b) => b.active).length;
+  const canAddBranch = maxBranches < 0 || activeBranches < maxBranches;
+
   return (
     <div className="vr-stack">
       <PageHeader
@@ -331,46 +574,137 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
       {/* ————— GENERAL ————— */}
       {tab === "general" && (
         <>
+          {orgError && <div className="vr-alert vr-alert-critical"><span>{orgError}</span></div>}
+          {orgNotice && !orgError && <div className="vr-alert vr-alert-info"><span>{orgNotice}</span></div>}
+          {branchError && <div className="vr-alert vr-alert-critical"><span>{branchError}</span></div>}
+          {branchNotice && !branchError && <div className="vr-alert vr-alert-info"><span>{branchNotice}</span></div>}
+
           <section className="vr-card">
-            <h2>Datos de la organización</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12 }}>
-              {[
-                ["Nombre", ctx.organization.name],
-                ["Razón social", ctx.organization.legal_name ?? "—"],
-                ["NIT", ctx.organization.tax_id ?? "—"],
-                ["Ciudad", ctx.organization.city ?? "—"],
-                ["Moneda", ctx.organization.currency ?? "COP"],
-                ["Zona horaria", ctx.organization.timezone ?? "America/Bogota"],
-                ["Creada", formatDate(ctx.organization.created_at)],
-                ["Sucursales activas", String(ctx.branches.length)],
-              ].map(([k, v]) => (
-                <div key={k} style={{ padding: 12, background: "#fbfaff", borderRadius: 11 }}>
-                  <div style={{ fontSize: 10, color: "#9a96a9", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>{k}</div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 3 }}>{v}</div>
-                </div>
-              ))}
+            <div className="vr-section-head">
+              <div>
+                <h2 style={{ marginBottom: 4 }}>Datos de la organización</h2>
+                <p style={{ margin: 0, fontSize: 12.5 }}>
+                  {adminOnly
+                    ? "Edita la información de tu negocio y guárdala con un clic."
+                    : "Solo el Propietario o Administración pueden editar estos datos."}
+                </p>
+              </div>
             </div>
+
+            {adminOnly ? (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 13, marginBottom: 14 }}>
+                  <Field label="Nombre *">
+                    <input value={orgName} onChange={(e) => setOrgName(e.target.value)} maxLength={120} placeholder="Ej. Salón Michael" />
+                  </Field>
+                  <Field label="Razón social">
+                    <input value={orgLegal} onChange={(e) => setOrgLegal(e.target.value)} maxLength={160} placeholder="Ej. Salón Michael S.A.S." />
+                  </Field>
+                  <Field label="NIT">
+                    <input value={orgTax} onChange={(e) => setOrgTax(e.target.value)} maxLength={40} placeholder="Ej. 900123456-1" />
+                  </Field>
+                  <Field label="Teléfono">
+                    <input value={orgPhone} onChange={(e) => setOrgPhone(e.target.value)} maxLength={40} placeholder="Ej. 300 123 4567" />
+                  </Field>
+                  <Field label="Correo">
+                    <input value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} type="email" maxLength={120} placeholder="Ej. contacto@minegocio.co" />
+                  </Field>
+                  <Field label="Ciudad">
+                    <input value={orgCity} onChange={(e) => setOrgCity(e.target.value)} maxLength={80} placeholder="Ej. Bogotá" />
+                  </Field>
+                  <Field label="Dirección">
+                    <input value={orgAddress} onChange={(e) => setOrgAddress(e.target.value)} maxLength={200} placeholder="Ej. Cra 7 #45-67" />
+                  </Field>
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <span className="vr-muted" style={{ fontSize: 11 }}>
+                    Moneda {ctx.organization.currency ?? "COP"} · Zona horaria {ctx.organization.timezone ?? "America/Bogota"} · Creada {formatDate(ctx.organization.created_at)}
+                  </span>
+                  <button className="vr-btn" onClick={() => void saveOrganization()} disabled={savingOrg}>
+                    {savingOrg ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Guardar cambios
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12 }}>
+                {[
+                  ["Nombre", ctx.organization.name],
+                  ["Razón social", ctx.organization.legal_name ?? "—"],
+                  ["NIT", ctx.organization.tax_id ?? "—"],
+                  ["Ciudad", ctx.organization.city ?? "—"],
+                  ["Moneda", ctx.organization.currency ?? "COP"],
+                  ["Zona horaria", ctx.organization.timezone ?? "America/Bogota"],
+                  ["Creada", formatDate(ctx.organization.created_at)],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ padding: 12, background: "#fbfaff", borderRadius: 11 }}>
+                    <div style={{ fontSize: 10, color: "#9a96a9", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 700 }}>{k}</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, marginTop: 3 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="vr-card">
-            <h2>Sucursales</h2>
-            <div className="vr-table-wrap">
-              <table className="vr-table">
-                <thead>
-                  <tr><th>Sucursal</th><th>Dirección</th><th>Teléfono</th><th>Estado</th></tr>
-                </thead>
-                <tbody>
-                  {ctx.branches.map((b) => (
-                    <tr key={b.id}>
-                      <td><strong>{b.name}</strong></td>
-                      <td>{b.address ?? "—"}</td>
-                      <td>{b.phone ?? "—"}</td>
-                      <td><span className={`vr-pill ${b.active ? "vr-pill-green" : "vr-pill-gray"}`}>{b.active ? "Activa" : "Inactiva"}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="vr-section-head">
+              <div>
+                <h2 style={{ marginBottom: 4 }}>Sucursales</h2>
+                <p style={{ margin: 0, fontSize: 12.5 }}>
+                  {maxBranches < 0
+                    ? `${activeBranches} activa(s) · sin límite de sucursales${ctx.subscription?.plan ? ` (plan ${planName})` : ""}.`
+                    : `${activeBranches} de ${maxBranches} sucursal(es) activa(s) · plan ${planName}.`}
+                </p>
+              </div>
+              {adminOnly && (
+                <button
+                  className="vr-btn vr-btn-sm"
+                  disabled={!canAddBranch}
+                  title={canAddBranch ? undefined : "Límite de sucursales del plan alcanzado"}
+                  onClick={() => openBranchModal(null)}
+                >
+                  <Plus size={13} /> Agregar sucursal
+                </button>
+              )}
             </div>
+
+            {!canAddBranch && (
+              <div className="vr-alert vr-alert-info" style={{ marginBottom: 12 }}>
+                <AlertTriangle size={15} />
+                <span>Límite del plan alcanzado: {maxBranches} sucursal(es) activa(s). Desactiva una de la lista o cambia al plan Elite (sucursales ilimitadas) para agregar más.</span>
+              </div>
+            )}
+
+            {branchList.length === 0 ? (
+              <EmptyState title="Sin sucursales" body="Agrega la primera sucursal de tu negocio." />
+            ) : (
+              <div className="vr-table-wrap">
+                <table className="vr-table">
+                  <thead>
+                    <tr><th>Sucursal</th><th>Dirección</th><th>Teléfono</th><th>Estado</th>{adminOnly && <th>Acciones</th>}</tr>
+                  </thead>
+                  <tbody>
+                    {branchList.map((b) => (
+                      <tr key={b.id}>
+                        <td><strong>{b.name}</strong></td>
+                        <td>{b.address ?? "—"}</td>
+                        <td>{b.phone ?? "—"}</td>
+                        <td><span className={`vr-pill ${b.active ? "vr-pill-green" : "vr-pill-gray"}`}>{b.active ? "Activa" : "Inactiva"}</span></td>
+                        {adminOnly && (
+                          <td>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <button className="vr-btn-secondary vr-btn-sm" onClick={() => openBranchModal(b)}>Editar</button>
+                              <button className="vr-btn-danger vr-btn-sm" onClick={() => void toggleBranchActive(b)}>
+                                {b.active ? "Desactivar" : "Activar"}
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}
@@ -382,6 +716,26 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
           {userNotice && !userError && <div className="vr-alert vr-alert-info"><span>{userNotice}</span></div>}
 
           <section className="vr-card">
+            <div className="vr-section-head">
+              <div>
+                <h2 style={{ marginBottom: 4 }}>Equipo de la organización</h2>
+                <p style={{ margin: 0, fontSize: 12.5 }}>
+                  Usuarios vinculados con su perfil, sucursal y estado. Crea accesos nuevos con correo y contraseña.
+                </p>
+              </div>
+              {adminOnly && (
+                <button
+                  className="vr-btn vr-btn-sm"
+                  onClick={() => {
+                    setShowCreate(true);
+                    setUserError("");
+                    setUserNotice("");
+                  }}
+                >
+                  <Plus size={13} /> Crear usuario
+                </button>
+              )}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 14, marginBottom: 18 }}>
               <div>
                 <div className="vr-muted" style={{ fontSize: 11 }}>Usuarios registrados</div>
@@ -601,6 +955,24 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
       {/* ————— PLANES ————— */}
       {tab === "planes" && (
         <>
+          {planError && (
+            <div className="vr-alert vr-alert-warning">
+              <AlertTriangle size={15} />
+              <span>{planError}</span>
+            </div>
+          )}
+          {planNotice && (
+            <div className="vr-alert vr-alert-info">
+              <CheckCircle2 size={15} />
+              <span>{planNotice}</span>
+            </div>
+          )}
+          {plans.length === 0 && (
+            <EmptyState
+              title="No hay planes cargados"
+              body="La tabla vellora_plans está vacía (o RLS la bloquea). Ejecuta el script vellora-sql-v12-planes-suscripciones.sql en Supabase → SQL Editor y recarga esta pantalla."
+            />
+          )}
           <section className="vr-card">
             <div className="vr-section-head">
               <div>
@@ -648,6 +1020,14 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
                       </li>
                     ))}
                   </ul>
+                  <button
+                    className="vr-btn vr-btn-sm"
+                    style={{ width: "100%" }}
+                    disabled={isCurrent || switchingPlan === p.id}
+                    onClick={() => void choosePlan(p)}
+                  >
+                    {switchingPlan === p.id ? "Cambiando…" : isCurrent ? "Plan actual" : "Elegir este plan"}
+                  </button>
                 </section>
               );
             })}
@@ -693,6 +1073,94 @@ export default function ConfiguracionView({ ctx }: { ctx: OrganizationContext })
           </section>
         </>
       )}
+
+      {/* ————— Crear usuario (modal) ————— */}
+      <Modal open={showCreate} title="Crear usuario" onClose={() => !creatingUser && setShowCreate(false)} width={560}>
+        <p style={{ fontSize: 12.5, margin: "0 0 14px" }}>
+          Se crea (o reutiliza, si el correo ya existe) el usuario de acceso y se vincula a esta
+          organización con el perfil elegido. La contraseña debe tener al menos 8 caracteres.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 13, marginBottom: 14 }}>
+          <Field label="Nombre completo">
+            <input value={cuName} onChange={(e) => setCuName(e.target.value)} placeholder="Ej. Laura Gómez" maxLength={80} />
+          </Field>
+          <Field label="Teléfono (opcional)">
+            <input value={cuPhone} onChange={(e) => setCuPhone(e.target.value)} placeholder="300 123 4567" maxLength={30} />
+          </Field>
+          <Field label="Correo *">
+            <input value={cuEmail} onChange={(e) => setCuEmail(e.target.value)} type="email" placeholder="usuario@correo.com" required />
+          </Field>
+          <Field label="Contraseña *">
+            <input value={cuPassword} onChange={(e) => setCuPassword(e.target.value)} type="password" placeholder="Mínimo 8 caracteres" required />
+          </Field>
+          <Field label="Perfil de acceso *">
+            <select value={cuProfileId} onChange={(e) => setCuProfileId(e.target.value)}>
+              <option value="">Seleccionar perfil</option>
+              {roles.filter((r) => r.active && r.role_key !== "owner").map((r) => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Sucursal (opcional)">
+            <select value={cuBranchId} onChange={(e) => setCuBranchId(e.target.value)}>
+              <option value="">Sin sucursal asignada</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button className="vr-btn-secondary" onClick={() => setShowCreate(false)} disabled={creatingUser}>Cancelar</button>
+          <button className="vr-btn" onClick={() => void createUser()} disabled={creatingUser}>
+            {creatingUser ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            {creatingUser ? "Creando…" : "Crear usuario"}
+          </button>
+        </div>
+      </Modal>
+
+      {/* ————— Sucursal (modal crear/editar) ————— */}
+      <Modal
+        open={showBranchModal}
+        title={editingBranch ? `Editar sucursal · ${editingBranch.name}` : "Agregar sucursal"}
+        onClose={() => !savingBranch && setShowBranchModal(false)}
+        width={520}
+      >
+        <p style={{ fontSize: 12.5, margin: "0 0 14px" }}>
+          {maxBranches < 0
+            ? `Plan ${planName}: sucursales ilimitadas.`
+            : `Plan ${planName}: ${activeBranches} de ${maxBranches} sucursal(es) activa(s) en uso.`}
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 13, marginBottom: 14 }}>
+          <Field label="Nombre *">
+            <input value={bName} onChange={(e) => setBName(e.target.value)} placeholder="Ej. Sede Norte" maxLength={80} />
+          </Field>
+          <Field label="Teléfono">
+            <input value={bPhone} onChange={(e) => setBPhone(e.target.value)} placeholder="300 123 4567" maxLength={30} />
+          </Field>
+          <Field label="Dirección">
+            <input value={bAddress} onChange={(e) => setBAddress(e.target.value)} placeholder="Cra 7 #45-67" maxLength={160} />
+          </Field>
+          {editingBranch && (
+            <Field label="Estado">
+              <select value={bActive ? "active" : "inactive"} onChange={(e) => setBActive(e.target.value === "active")}>
+                <option value="active">Activa</option>
+                <option value="inactive">Inactiva</option>
+              </select>
+            </Field>
+          )}
+        </div>
+        {branchError && (
+          <div className="vr-alert vr-alert-critical" style={{ marginBottom: 10 }}><span>{branchError}</span></div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button className="vr-btn-secondary" onClick={() => setShowBranchModal(false)} disabled={savingBranch}>Cancelar</button>
+          <button className="vr-btn" onClick={() => void saveBranch()} disabled={savingBranch}>
+            {savingBranch ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            {savingBranch ? "Guardando…" : editingBranch ? "Guardar cambios" : "Agregar sucursal"}
+          </button>
+        </div>
+      </Modal>
 
       {/* ————— Editor de perfil (modal) ————— */}
       <Modal open={showEditor} title={editingRole ? `Editar perfil · ${editingRole.name}` : "Crear perfil"} onClose={() => setShowEditor(false)} width={640}>

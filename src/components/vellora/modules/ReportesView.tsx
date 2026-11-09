@@ -3,7 +3,7 @@
 /* VelloRa ERP — Módulo Reportes: analítica avanzada (paso 7) con export CSV. */
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, Download } from "lucide-react";
+import { Loader2, RefreshCw, Download, Lock, ShieldCheck } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import type { OrganizationContext } from "@/lib/vellora/types";
 import {
@@ -13,6 +13,63 @@ import { formatCOP, formatNumber, formatPct, bogotaDayKey } from "@/lib/vellora/
 import { computeKpis } from "@/lib/vellora/queries";
 import { PageHeader, EmptyState, ChartBox } from "../ui-bits";
 
+/* ————— Reportes por plan —————
+   Cada plan desbloquea más secciones (espejo de las características de
+   PLAN_LIMITS en permissions.ts):
+     · esencial    → Resumen + Top servicios
+     · profesional → + Ingresos por profesional + Comparativo mensual + CSV
+     · elite       → + Métodos de pago (todo)
+   Plan desconocido o sin suscripción → todo desbloqueado (mismo criterio
+   tolerante de resolvePlanLimits).                                   */
+type ReportFlags = {
+  resumen: boolean; top: boolean; porProfesional: boolean;
+  pagos: boolean; mensual: boolean; csv: boolean;
+};
+
+function reportsForPlan(planKey: string): ReportFlags {
+  if (planKey === "esencial") {
+    return { resumen: true, top: true, porProfesional: false, pagos: false, mensual: false, csv: false };
+  }
+  if (planKey === "profesional") {
+    return { resumen: true, top: true, porProfesional: true, pagos: false, mensual: true, csv: true };
+  }
+  return { resumen: true, top: true, porProfesional: true, pagos: true, mensual: true, csv: true };
+}
+
+const UNLOCK_LABEL: Record<keyof ReportFlags, string> = {
+  resumen: "",
+  top: "plan Esencial",
+  porProfesional: "plan Profesional",
+  pagos: "plan Elite",
+  mensual: "plan Profesional",
+  csv: "plan Profesional",
+};
+
+/** Tarjeta con candado para secciones no incluidas en el plan actual. */
+function LockedCard({ title, planLabel }: { title: string; planLabel: string }) {
+  return (
+    <section className="vr-card" style={{ position: "relative" }}>
+      <h2>{title}</h2>
+      <div
+        style={{
+          display: "grid", placeItems: "center", textAlign: "center",
+          minHeight: 180, padding: "18px 10px",
+          background: "repeating-linear-gradient(135deg, #faf9fd 0 12px, #f5f3fb 12px 24px)",
+          borderRadius: 12, border: "1px dashed #d9d3ea",
+        }}
+      >
+        <div style={{ width: 42, height: 42, borderRadius: 999, background: "#efe9fb", display: "grid", placeItems: "center", margin: "0 auto 10px" }}>
+          <Lock size={18} style={{ color: "#7556d8" }} />
+        </div>
+        <strong style={{ fontSize: 13.5, color: "var(--bp-ink)", display: "block" }}>Reporte bloqueado en tu plan actual</strong>
+        <span style={{ fontSize: 12, color: "#8d899e", display: "block", marginTop: 4, lineHeight: 1.5 }}>
+          Disponible desde el <strong>{planLabel}</strong>. Cambia de plan en<br />Configuración → Plan y Suscripción.
+        </span>
+      </div>
+    </section>
+  );
+}
+
 export default function ReportesView({ ctx }: { ctx: OrganizationContext }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -21,6 +78,10 @@ export default function ReportesView({ ctx }: { ctx: OrganizationContext }) {
   const [byPayment, setByPayment] = useState<{ name: string; value: number }[]>([]);
   const [summary, setSummary] = useState<{ label: string; value: string; delta: string }[]>([]);
   const [monthly, setMonthly] = useState<{ name: string; revenue: number }[]>([]);
+
+  const planKey = String(ctx.subscription?.plan?.plan_key ?? "").toLowerCase();
+  const planName = ctx.subscription?.plan?.name ?? "Elite";
+  const reports = reportsForPlan(planKey);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,14 +183,22 @@ export default function ReportesView({ ctx }: { ctx: OrganizationContext }) {
     <div className="vr-stack">
       <PageHeader
         eyebrow="Analítica"
-        title="Reportes avanzados"
-        subtitle="Top servicios, productividad por profesional, mezcla de pagos y comparativo mensual."
+        title="Reportes"
+        subtitle={`Reportes según tu plan: resumen y top de servicios para todos; productividad por profesional y comparativo mensual desde Profesional; mezcla de pagos en Elite.`}
         actions={
           <>
+            <span className="vr-pill vr-pill-gray" title="Plan vigente de la organización" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <ShieldCheck size={13} /> Plan {planName}
+            </span>
             <button className="vr-btn-secondary" onClick={() => void load()} disabled={loading}>
               {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Actualizar
             </button>
-            <button className="vr-btn" onClick={exportCsv}>
+            <button
+              className="vr-btn"
+              onClick={exportCsv}
+              disabled={!reports.csv}
+              title={reports.csv ? "Descargar CSV" : `Disponible desde el ${UNLOCK_LABEL.csv}`}
+            >
               <Download size={14} /> Exportar CSV
             </button>
           </>
@@ -149,35 +218,43 @@ export default function ReportesView({ ctx }: { ctx: OrganizationContext }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 18, alignItems: "start" }}>
-        <section className="vr-card">
-          <h2>Ingresos por profesional · 30 días</h2>
-          <ChartBox height={250}>
-            {(w1) => (
-            <BarChart width={w1} height={250} data={byProfessional} layout="vertical" margin={{ left: 8, right: 12 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#5e5a70" }} tickLine={false} axisLine={false} width={72} />
-                <Tooltip formatter={(v: number) => [formatCOP(v), "Ingresos"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
-                <Bar dataKey="revenue" fill="#7556d8" radius={[0, 6, 6, 0]} maxBarSize={18} />
-            </BarChart>
-            )}
-          </ChartBox>
-        </section>
+        {reports.porProfesional ? (
+          <section className="vr-card">
+            <h2>Ingresos por profesional · 30 días</h2>
+            <ChartBox height={250}>
+              {(w1) => (
+              <BarChart width={w1} height={250} data={byProfessional} layout="vertical" margin={{ left: 8, right: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#5e5a70" }} tickLine={false} axisLine={false} width={72} />
+                  <Tooltip formatter={(v: number) => [formatCOP(v), "Ingresos"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
+                  <Bar dataKey="revenue" fill="#7556d8" radius={[0, 6, 6, 0]} maxBarSize={18} />
+              </BarChart>
+              )}
+            </ChartBox>
+          </section>
+        ) : (
+          <LockedCard title="Ingresos por profesional · 30 días" planLabel={UNLOCK_LABEL.porProfesional} />
+        )}
 
-        <section className="vr-card">
-          <h2>Métodos de pago · 30 días</h2>
-          <ChartBox height={250}>
-            {(w2) => (
-            <BarChart width={w2} height={250} data={byPayment} margin={{ left: 0, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} width={46} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
-                <Tooltip formatter={(v: number) => [formatCOP(v), "Recaudo"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
-                <Bar dataKey="value" fill="#239b72" radius={[6, 6, 0, 0]} maxBarSize={40} />
-            </BarChart>
-            )}
-          </ChartBox>
-        </section>
+        {reports.pagos ? (
+          <section className="vr-card">
+            <h2>Métodos de pago · 30 días</h2>
+            <ChartBox height={250}>
+              {(w2) => (
+              <BarChart width={w2} height={250} data={byPayment} margin={{ left: 0, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} width={46} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
+                  <Tooltip formatter={(v: number) => [formatCOP(v), "Recaudo"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
+                  <Bar dataKey="value" fill="#239b72" radius={[6, 6, 0, 0]} maxBarSize={40} />
+              </BarChart>
+              )}
+            </ChartBox>
+          </section>
+        ) : (
+          <LockedCard title="Métodos de pago · 30 días" planLabel={UNLOCK_LABEL.pagos} />
+        )}
       </div>
 
       <section className="vr-card">
@@ -216,20 +293,24 @@ export default function ReportesView({ ctx }: { ctx: OrganizationContext }) {
         )}
       </section>
 
-      <section className="vr-card">
-        <h2>Comparativo mensual de ingresos</h2>
-        <ChartBox height={210}>
-          {(w3) => (
-          <BarChart width={w3} height={210} data={monthly} margin={{ left: 0, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : `${Math.round(v / 1000)}k`)} />
-              <Tooltip formatter={(v: number) => [formatCOP(v), "Ingresos"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
-              <Bar dataKey="revenue" fill="#3973ce" radius={[6, 6, 0, 0]} maxBarSize={46} />
-          </BarChart>
-          )}
-        </ChartBox>
-      </section>
+      {reports.mensual ? (
+        <section className="vr-card">
+          <h2>Comparativo mensual de ingresos</h2>
+          <ChartBox height={210}>
+            {(w3) => (
+            <BarChart width={w3} height={210} data={monthly} margin={{ left: 0, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eeecf4" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#9a96a9" }} tickLine={false} axisLine={false} width={52} tickFormatter={(v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : `${Math.round(v / 1000)}k`)} />
+                <Tooltip formatter={(v: number) => [formatCOP(v), "Ingresos"]} contentStyle={{ borderRadius: 12, border: "1px solid #ebe9f2", fontSize: 12 }} />
+                <Bar dataKey="revenue" fill="#3973ce" radius={[6, 6, 0, 0]} maxBarSize={46} />
+            </BarChart>
+            )}
+          </ChartBox>
+        </section>
+      ) : (
+        <LockedCard title="Comparativo mensual de ingresos" planLabel={UNLOCK_LABEL.mensual} />
+      )}
     </div>
   );
 }

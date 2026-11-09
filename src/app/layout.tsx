@@ -1,34 +1,24 @@
-import type { Metadata, Viewport } from "next";
-import { Manrope, DM_Sans } from "next/font/google";
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
-const manrope = Manrope({
+const geistSans = Geist({
+  variable: "--font-geist-sans",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-manrope",
-  display: "swap",
 });
 
-const dmSans = DM_Sans({
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-dmsans",
-  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "VelloRa ERP · Gestión para salones de belleza y SPA",
+  title: "VelloRa ERP — Salones & Spa · Gestión inteligente",
   description:
-    "ERP multi-tenant para salones de belleza y SPA: agenda, caja, clientes, inventario, nómina, fidelización, reportes y planes. Perfiles Administración, Cajero y Profesional.",
-  keywords: ["ERP", "salón de belleza", "spa", "agenda", "VelloRa", "Supabase"],
+    "Agenda, POS e inventario de tu salón, barbería o spa en un solo lugar. Acceso protegido con Supabase Auth.",
+  keywords: ["VelloRa", "ERP", "salones", "spa", "barbería", "agenda", "POS", "inventario"],
   authors: [{ name: "VelloRa" }],
-};
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  themeColor: "#7556d8",
 };
 
 export default function RootLayout({
@@ -37,8 +27,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${manrope.variable} ${dmSans.variable}`}>
-      <body className="antialiased">
+    <html lang="es" suppressHydrationWarning>
+      <head>
+        {/* Manrope: el AuthGate la referencia literal en sus estilos inline. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+      >
         {children}
         <Toaster />
       </body>

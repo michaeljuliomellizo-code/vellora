@@ -33,6 +33,9 @@ export async function fetchAppointments(organizationId: string, daysBack = 70, d
  * Ventas = service_orders. Deriva por orden:
  *  · kind (servicio/producto/mixto) desde service_order_items
  *  · payment_method y estado de pago desde payments
+ *  · items: las líneas REALES registradas de la venta (1 venta puede llevar
+ *    N ítems: varios servicios y/o productos, p.ej. Manicure + Pedicure +
+ *    shampoo), para mostrarlas en el detalle del historial.
  */
 export async function fetchSales(organizationId: string, daysBack = 70): Promise<ServiceOrder[]> {
   const sb = supabaseBrowser();
@@ -84,6 +87,7 @@ export async function fetchSales(organizationId: string, daysBack = 70): Promise
       status: o.status === "void" ? "void" : isPaid ? "paid" : "open",
       kind: hasSvc && hasPrd ? "mixto" : hasPrd ? "producto" : "servicio",
       payment_method: myPays.length ? myPays[myPays.length - 1].method : null,
+      items: its,
     } as ServiceOrder;
   });
 }
@@ -521,4 +525,274 @@ export async function topServices(
     byService.set(key, prev);
   }
   return [...byService.values()].sort((a, b) => b.revenue - a.revenue).slice(0, limit);
+}
+
+/* ————— Venta directa (sin agenda) —————
+   Servicios a clientes sin cita y/o productos del negocio, asociados a la
+   caja del día y con descuento de inventario.
+   1) Intenta la RPC vellora_create_sale (SQL v17): ATÓMICA — orden, líneas,
+      pago, movimiento de caja y descuento de inventario en una transacción,
+      con validación de membresía y de stock en la BD.
+   2) Si la RPC no está aplicada (o modo demo), registra paso a paso igual
+      que el resto de módulos. En ambos casos devuelve warnings no fatales. */
+
+export type SaleLineInput = {
+  kind: "servicio" | "producto";
+  service_id?: string | null;
+  product_id?: string | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  discount?: number;
+  commission_percent?: number;
+};
+
+export type CreateSaleInput = {
+  organizationId: string;
+  lines: SaleLineInput[];
+  /** Cliente existente (opcional). */
+  customerId?: string | null;
+  /** Cliente sin agenda: si no existe con ese nombre se crea; vacío = ocasional. */
+  customerName?: string | null;
+  employeeId?: string | null;
+  branchId?: string | null;
+  paymentMethod: string;
+  /** true = queda pagada + pago + movimiento de caja; false = abierta para cobrar en Caja. */
+  collectNow: boolean;
+  discount?: number;
+  /** Caja abierta del día: el cobro en efectivo entra al arqueo (cash_movements). */
+  cashRegisterId?: string | null;
+  notes?: string | null;
+};
+
+export type CreateSaleResult = {
+  order_id: string;
+  total: number;
+  status: string;
+  customer_id: string | null;
+  customer_created: boolean;
+  payment_id: string | null;
+  cash_movement_id: string | null;
+  stock_updated: number;
+  /** Número de líneas registradas en la orden (RPC v18). */
+  items_count?: number;
+  warnings: string;
+};
+
+export async function createSale(input: CreateSaleInput): Promise<CreateSaleResult> {
+  const sb = supabaseBrowser();
+  const params = {
+    p_organization_id: input.organizationId,
+    p_items: input.lines.map((l) => ({
+      kind: l.kind,
+      service_id: l.service_id ?? null,
+      product_id: l.product_id ?? null,
+      description: l.description,
+      quantity: l.quantity,
+      unit_price: l.unit_price,
+      discount: l.discount ?? 0,
+      commission_percent: l.commission_percent ?? null,
+    })),
+    p_customer_id: input.customerId ?? null,
+    p_customer_name: input.customerName ?? null,
+    p_employee_id: input.employeeId ?? null,
+    p_branch_id: input.branchId ?? null,
+    p_payment_method: input.paymentMethod,
+    p_collect_now: input.collectNow,
+    p_discount: input.discount ?? 0,
+    p_cash_register_id: input.cashRegisterId ?? null,
+    p_notes: input.notes ?? null,
+  };
+  try {
+    const { data, error } = await sb.rpc("vellora_create_sale", params);
+    if (!error) {
+      const row = (Array.isArray(data) ? data[0] : data) as CreateSaleResult | null;
+      if (row && typeof row.order_id === "string" && row.order_id) return row;
+      /* data vacía u otra forma → fallback */
+    }
+  } catch {
+    /* sin RPC → fallback paso a paso */
+  }
+  return createSaleStepByStep(input);
+}
+
+/** Fallback sin RPC: mismo resultado, registro paso a paso desde el cliente. */
+async function createSaleStepByStep(input: CreateSaleInput): Promise<CreateSaleResult> {
+  const sb = supabaseBrowser();
+  const warnings: string[] = [];
+  const warn = (msg: string) => {
+    if (warnings.length === 0) warnings.push(msg);
+  };
+
+  if (input.lines.length === 0) throw new Error("La venta debe tener al menos un ítem (servicio o producto)");
+
+  const subtotal = input.lines.reduce((a, l) => a + l.quantity * l.unit_price - (l.discount ?? 0), 0);
+  const discount = Math.min(Math.max(input.discount ?? 0, 0), subtotal);
+  const total = Math.round((subtotal - discount) * 100) / 100;
+  if (total <= 0) throw new Error("El total de la venta debe ser mayor a cero");
+
+  /* Cliente: existente, buscado por nombre o creado */
+  let customerId = input.customerId ?? null;
+  let customerCreated = false;
+  const custName = (input.customerName ?? "").trim();
+  if (!customerId && custName) {
+    const { data: cus, error: cusErr } = await sb
+      .from("customers")
+      .select("id,full_name")
+      .eq("organization_id", input.organizationId);
+    if (cusErr) throw new Error(`No fue posible verificar los clientes: ${cusErr.message}`);
+    const match = ((cus ?? []) as { id: string; full_name: string }[]).find(
+      (c) => (c.full_name ?? "").trim().toLowerCase() === custName.toLowerCase()
+    );
+    if (match) {
+      customerId = match.id;
+    } else {
+      const { data: created, error: insErr } = await sb
+        .from("customers")
+        .insert({ organization_id: input.organizationId, full_name: custName })
+        .select("id")
+        .single();
+      if (insErr || !created) {
+        throw new Error(`No fue posible registrar al cliente: ${insErr?.message ?? "respuesta vacía"}`);
+      }
+      customerId = (created as { id: string }).id;
+      customerCreated = true;
+    }
+  }
+
+  /* Stock real en BD (por si cambió desde que se abrió el formulario) */
+  const productLines = input.lines.filter((l) => l.kind === "producto" && l.product_id);
+  const needed = new Map<string, number>();
+  for (const l of productLines) needed.set(l.product_id as string, (needed.get(l.product_id as string) ?? 0) + l.quantity);
+  const stockById = new Map<string, { stock: number; cost: number }>();
+  const productIds = [...needed.keys()];
+  if (productIds.length) {
+    const { data: prods, error: prodErr } = await sb
+      .from("products")
+      .select("id,stock,cost")
+      .in("id", productIds)
+      .eq("organization_id", input.organizationId);
+    if (prodErr) throw new Error(`No fue posible verificar el inventario: ${prodErr.message}`);
+    for (const p of ((prods ?? []) as unknown) as { id: string; stock: number; cost: number }[]) {
+      stockById.set(p.id, { stock: Number(p.stock), cost: Number(p.cost) });
+    }
+  }
+  for (const [pid, qty] of needed) {
+    const info = stockById.get(pid);
+    if (!info) throw new Error("Uno de los productos ya no existe en el inventario");
+    if (info.stock < qty) {
+      const nm = input.lines.find((l) => l.product_id === pid)?.description ?? pid;
+      throw new Error(`Stock insuficiente de ${nm}: hay ${info.stock}, se piden ${qty}`);
+    }
+  }
+
+  /* Orden de venta (sin cita: appointment_id null) */
+  const { data: order, error: ordErr } = await sb
+    .from("service_orders")
+    .insert({
+      organization_id: input.organizationId,
+      branch_id: input.branchId ?? null,
+      customer_id: customerId,
+      employee_id: input.employeeId ?? null,
+      appointment_id: null,
+      status: input.collectNow ? "paid" : "open",
+      subtotal,
+      discount,
+      tax: 0,
+      total,
+    })
+    .select("id")
+    .single();
+  if (ordErr || !order) throw new Error(`No fue posible registrar la venta: ${ordErr?.message ?? "respuesta vacía"}`);
+  const orderId = (order as { id: string }).id;
+
+  /* Líneas de la venta */
+  const { error: itemsErr } = await sb.from("service_order_items").insert(
+    input.lines.map((l) => ({
+      order_id: orderId,
+      service_id: l.service_id ?? null,
+      product_id: l.product_id ?? null,
+      description: l.description,
+      quantity: l.quantity,
+      unit_price: l.unit_price,
+      discount: l.discount ?? 0,
+      commission_percent: l.commission_percent ?? null,
+    }))
+  );
+  if (itemsErr) warn(`La venta se registró pero fallaron las líneas: ${itemsErr.message}`);
+
+  /* Pago + caja (solo si se cobra ahora) */
+  let paymentId: string | null = null;
+  let cashMovementId: string | null = null;
+  if (input.collectNow) {
+    const { data: pay, error: payErr } = await sb
+      .from("payments")
+      .insert({
+        organization_id: input.organizationId,
+        order_id: orderId,
+        method: input.paymentMethod,
+        amount: total,
+        paid_at: new Date().toISOString(),
+        reference: null,
+      })
+      .select("id")
+      .single();
+    if (payErr || !pay) {
+      warn(`La venta se registró pero falló el registro del pago: ${payErr?.message ?? "respuesta vacía"}`);
+    } else {
+      paymentId = (pay as { id: string }).id;
+      if (input.cashRegisterId) {
+        const { data: mov, error: movErr } = await sb
+          .from("cash_movements")
+          .insert({
+            cash_register_id: input.cashRegisterId,
+            organization_id: input.organizationId,
+            type: "sale",
+            method: input.paymentMethod,
+            amount: total,
+            description: `Venta directa · ${customerId ? custName || "cliente" : "cliente ocasional"}`,
+            payment_id: paymentId,
+          })
+          .select("id")
+          .single();
+        if (movErr || !mov) warn(`La venta se registró pero falló el movimiento de caja: ${movErr?.message ?? "respuesta vacía"}`);
+        else cashMovementId = (mov as { id: string }).id;
+      } else if (input.paymentMethod === "efectivo") {
+        warn("No hay caja abierta: el cobro en efectivo no quedó asociado a un arqueo.");
+      }
+    }
+  }
+
+  /* Inventario: movimiento de salida + descuento de stock por producto */
+  let stockUpdated = 0;
+  for (const [pid, qty] of needed) {
+    const info = stockById.get(pid);
+    const { error: movErr } = await sb.from("inventory_movements").insert({
+      organization_id: input.organizationId,
+      product_id: pid,
+      movement_type: "venta",
+      quantity: qty,
+      unit_cost: info?.cost ?? 0,
+      reference: `Venta directa ${orderId}`,
+    });
+    if (movErr) warn(`Venta registrada, pero sin movimiento de inventario: ${movErr.message}`);
+    const { error: upErr } = await sb
+      .from("products")
+      .update({ stock: Math.max(0, Number(info?.stock ?? 0) - qty) })
+      .eq("id", pid);
+    if (upErr) warn(`Venta registrada, pero falló el descuento de stock: ${upErr.message}`);
+    else stockUpdated += 1;
+  }
+
+  return {
+    order_id: orderId,
+    total,
+    status: input.collectNow ? "paid" : "open",
+    customer_id: customerId,
+    customer_created: customerCreated,
+    payment_id: paymentId,
+    cash_movement_id: cashMovementId,
+    stock_updated: stockUpdated,
+    warnings: warnings.join(" · "),
+  };
 }

@@ -100,6 +100,7 @@ const MODULE_DEFS: { key: string; name: string; description: string }[] = [
   { key: "servicios", name: "Servicios", description: "Catálogo de servicios y tratamientos" },
   { key: "profesionales", name: "Profesionales", description: "Equipo, comisiones y horarios" },
   { key: "inventario", name: "Inventario", description: "Productos, stock y alertas" },
+  { key: "proveedores", name: "Proveedores", description: "Directorio de proveedores y datos de contacto" },
   { key: "compras", name: "Compras", description: "Órdenes a proveedores" },
   { key: "nomina", name: "Nómina", description: "Salarios, comisiones y pagos" },
   { key: "fidelizacion", name: "Fidelización", description: "Puntos y recompensas" },
@@ -544,6 +545,10 @@ const booking_settings: BookingSettings[] = [
     enabled: true,
     notice_hours: 2,
     horizon_days: 30,
+    /* FIX: faltaban las columnas v2 de BookingSettings (error TS2739 en next build) */
+    auto_confirm: true,
+    slot_minutes: 30,
+    cancellation_hours: 4,
     created_at: at(-200, 9),
     updated_at: at(-30, 9),
   },

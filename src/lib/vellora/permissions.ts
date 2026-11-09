@@ -18,7 +18,8 @@ export const MODULE_LIST: {
   { key: "servicios", name: "Servicios", description: "Catálogo de servicios y tratamientos", category: "Comercial", route: "servicios", sort: 6 },
   { key: "profesionales", name: "Profesionales", description: "Equipo, comisiones y horarios", category: "Gestión", route: "profesionales", sort: 7 },
   { key: "inventario", name: "Inventario", description: "Productos, stock y alertas", category: "Gestión", route: "inventario", sort: 8 },
-  { key: "compras", name: "Compras", description: "Órdenes a proveedores", category: "Gestión", route: "compras", sort: 9 },
+  { key: "proveedores", name: "Proveedores", description: "Directorio de proveedores y datos de contacto", category: "Gestión", route: "proveedores", sort: 9 },
+  { key: "compras", name: "Compras", description: "Órdenes a proveedores", category: "Gestión", route: "compras", sort: 10 },
   { key: "consumo", name: "Consumo interno", description: "Descuento de inventario por uso interno", category: "Gestión", route: "consumo", sort: 10 },
   { key: "nomina", name: "Nómina", description: "Salarios, comisiones y pagos", category: "Gestión", route: "nomina", sort: 11 },
   { key: "fidelizacion", name: "Fidelización", description: "Puntos, recompensas y recompensas canjeadas", category: "Comercial", route: "fidelizacion", sort: 12 },
@@ -49,13 +50,13 @@ function perms(spec: Partial<Record<ModuleKey, PermissionAction[] | "all">>): Re
 export const ROLE_PERMISSIONS: Record<RoleKey, Record<string, Record<PermissionAction, boolean>>> = {
   owner: perms({
     dashboard: "all", agenda: "all", caja: "all", clientes: "all", ventas: "all",
-    servicios: "all", profesionales: "all", inventario: "all", compras: "all",
+    servicios: "all", profesionales: "all", inventario: "all", proveedores: "all", compras: "all",
     consumo: "all", nomina: "all", fidelizacion: "all", marketing: "all", reportes: "all",
     reservas_online: "all", configuracion: "all",
   }),
   administracion: perms({
     dashboard: "all", agenda: "all", caja: "all", clientes: "all", ventas: "all",
-    servicios: "all", profesionales: "all", inventario: "all", compras: "all",
+    servicios: "all", profesionales: "all", inventario: "all", proveedores: "all", compras: "all",
     consumo: "all", nomina: "all", fidelizacion: "all", marketing: "all", reportes: "all",
     reservas_online: "all", configuracion: "all",
   }),
@@ -132,7 +133,7 @@ export const PLAN_LIMITS: Record<string, PlanLimits> = {
     features: [
       "3 sucursales · 15 profesionales",
       "Todo lo del plan Esencial",
-      "Inventario, compras y nómina",
+      "Inventario, proveedores, compras y nómina",
       "Fidelización y marketing",
       "Reportes avanzados · 1500 citas/mes",
     ],
@@ -156,6 +157,45 @@ export function resolvePlanLimits(
 ): PlanLimits {
   const key = String(plan?.plan_key ?? "").toLowerCase();
   return PLAN_LIMITS[key] ?? PLAN_LIMITS.elite;
+}
+
+/** ————— Módulos incluidos por plan —————
+ * La app oculta del menú los módulos que no incluye el plan vigente de la
+ * organización (organization_subscriptions → vellora_plans.plan_key).
+ * Espejo de las características anunciadas en PLAN_LIMITS:
+ *   · esencial    → operación básica (agenda, caja, clientes, ventas, servicios)
+ *   · profesional → + inventario, proveedores, compras, consumo, nómina,
+ *                   fidelización y marketing
+ *   · elite       → todos los módulos
+ * Plan desconocido o sin suscripción → todos los módulos (misma conducta
+ * tolerante que resolvePlanLimits, que hace fallback a elite).           */
+export const PLAN_MODULES: Record<string, ModuleKey[]> = {
+  esencial: [
+    "dashboard", "agenda", "caja", "clientes", "ventas", "servicios",
+    "profesionales", "reportes", "reservas_online", "configuracion",
+  ],
+  profesional: [
+    "dashboard", "agenda", "caja", "clientes", "ventas", "servicios",
+    "profesionales", "inventario", "proveedores", "compras", "consumo",
+    "nomina", "fidelizacion", "marketing", "reportes", "reservas_online",
+    "configuracion",
+  ],
+  elite: [
+    "dashboard", "agenda", "caja", "clientes", "ventas", "servicios",
+    "profesionales", "inventario", "proveedores", "compras", "consumo",
+    "nomina", "fidelizacion", "marketing", "reportes", "reservas_online",
+    "configuracion",
+  ],
+};
+
+/** ¿El plan incluye el módulo? Plan desconocido o sin suscripción → true. */
+export function planAllowsModule(
+  planKey: string | null | undefined,
+  moduleKey: ModuleKey | string
+): boolean {
+  const list = PLAN_MODULES[String(planKey ?? "").toLowerCase()];
+  if (!list) return true;
+  return list.includes(moduleKey as ModuleKey);
 }
 
 export type PlanCheck = {

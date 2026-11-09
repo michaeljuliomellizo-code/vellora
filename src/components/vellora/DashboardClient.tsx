@@ -77,7 +77,7 @@ function Trend({ value }: { value: number | null }) {
 
 export default function DashboardClient({ ctx, onView }: Props) {
   /* Guardia: solo Administración / Propietario */
-  const roleKey = (ctx.role?.role_key ?? "") as string;
+  const roleKey = (ctx?.role?.role_key ?? "") as string;
   const allowed = roleKey === "owner" || roleKey === "administracion";
 
   const [range, setRange] = useState<Range>("30d");
@@ -90,7 +90,7 @@ export default function DashboardClient({ ctx, onView }: Props) {
     setLoading(true);
     setError("");
     try {
-      const orgId = ctx.organizationId;
+      const orgId = ctx?.organizationId;
       const [appointments, sales, customers, employees, products, notifications, services] = await Promise.all([
         fetchAppointments(orgId, 90, 12),
         fetchSales(orgId, 90),

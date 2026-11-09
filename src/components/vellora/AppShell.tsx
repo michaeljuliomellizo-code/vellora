@@ -7,11 +7,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutDashboard, CalendarDays, Banknote, Users, ReceiptText, Scissors, UserCog,
-  Package, ShoppingCart, Wallet, Gift, Megaphone, BarChart3, Globe, Settings, Droplets,
+  Package, Truck, ShoppingCart, Wallet, Gift, Megaphone, BarChart3, Globe, Settings, Droplets,
   Menu, X, Bell, LogOut, Scissors as LogoIcon, ChevronRight, ShieldCheck, Info,
 } from "lucide-react";
 import type { ModuleKey, OrganizationContext, AppNotification } from "@/lib/vellora/types";
-import { MODULE_LIST, can, ROLE_DESCRIPTIONS, resolvePlanLimits } from "@/lib/vellora/permissions";
+import { MODULE_LIST, can, ROLE_DESCRIPTIONS, resolvePlanLimits, planAllowsModule } from "@/lib/vellora/permissions";
 import { initialsOf, formatDate } from "@/lib/vellora/format";
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
@@ -23,6 +23,7 @@ const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   servicios: Scissors,
   profesionales: UserCog,
   inventario: Package,
+  proveedores: Truck,
   compras: ShoppingCart,
   consumo: Droplets,
   nomina: Wallet,
@@ -50,7 +51,10 @@ export default function AppShell({ ctx, view, onView, onSignOut, notifications, 
 
   const roleKey = (ctx.role?.role_key ?? "profesional") as string;
 
-  /* Módulos visibles según permisos */
+  const plan = ctx.subscription?.plan;
+  const planKey = plan?.plan_key ?? "";
+
+  /* Módulos visibles según permisos del perfil Y módulos incluidos en el plan */
   const navModules = useMemo(
     () =>
       MODULE_LIST.filter((m) => {
@@ -58,9 +62,9 @@ export default function AppShell({ ctx, view, onView, onSignOut, notifications, 
           /* El dashboard solo lo ven Administración (y el owner protegido) */
           return roleKey === "owner" || roleKey === "administracion";
         }
-        return can(ctx.permissions, m.key, "can_view");
+        return can(ctx.permissions, m.key, "can_view") && planAllowsModule(planKey, m.key);
       }),
-    [ctx.permissions, roleKey]
+    [ctx.permissions, roleKey, planKey]
   );
 
   const groups = useMemo(() => {
@@ -80,8 +84,6 @@ export default function AppShell({ ctx, view, onView, onSignOut, notifications, 
   );
   const unread = myNotifications.length;
 
-  const plan = ctx.subscription?.plan;
-  const planKey = plan?.plan_key ?? "";
   const planLimits = resolvePlanLimits(plan);
 
   useEffect(() => {

@@ -1,0 +1,334 @@
+/* ============================================================
+   VelloRa ERP — Sistema de diseño vr-
+   Portada de acceso (AuthGate), shell y componentes comunes.
+   Paleta: violeta VelloRa (#7556d8) sobre superficies claras.
+   ============================================================ */
+
+:root {
+  --vr-primary: #7556d8;
+  --vr-primary-strong: #6344c6;
+  --vr-primary-soft: #f1edfd;
+  --vr-ink: #1c1830;
+  --vr-muted: #6f6a80;
+  --vr-border: #e6e2f0;
+  --vr-critical-bg: #fdecec;
+  --vr-critical-border: #f5c2c2;
+  --vr-critical-ink: #a33434;
+  --vr-warn-bg: #fff7e6;
+  --vr-warn-border: #f2dcad;
+  --vr-warn-ink: #8a6116;
+}
+
+body {
+  font-family: Manrope, var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ---- Portada de acceso (AuthGate) ---- */
+
+.vr-login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  background:
+    radial-gradient(900px 420px at 12% -8%, rgba(117, 86, 216, 0.16), transparent 60%),
+    radial-gradient(700px 380px at 100% 8%, rgba(117, 86, 216, 0.1), transparent 55%),
+    #f7f5fb;
+}
+
+.vr-login-card {
+  width: min(400px, 100%);
+  background: #ffffff;
+  border: 1px solid var(--vr-border);
+  border-radius: 18px;
+  padding: 28px 26px 22px;
+  box-shadow:
+    0 1px 2px rgba(28, 24, 48, 0.05),
+    0 18px 44px -18px rgba(99, 68, 198, 0.28);
+}
+
+.vr-login-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vr-brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: #fff;
+  background: linear-gradient(135deg, #8f6ff0 0%, var(--vr-primary) 55%, var(--vr-primary-strong) 100%);
+  box-shadow: 0 6px 14px -6px rgba(117, 86, 216, 0.65);
+  flex: none;
+}
+
+.vr-brand-mark-sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+}
+
+.vr-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Inputs de la portada (los labels de AuthGate no usan clases) */
+.vr-login-card label > input,
+.vr-stack input {
+  width: 100%;
+  font: 500 14px/1.4 inherit;
+  font-family: inherit;
+  color: var(--vr-ink);
+  background: #fbfaff;
+  border: 1px solid var(--vr-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.vr-login-card label > input::placeholder,
+.vr-stack input::placeholder {
+  color: #b3aec4;
+}
+
+.vr-login-card label > input:hover,
+.vr-stack input:hover {
+  border-color: #d3cbea;
+}
+
+.vr-login-card label > input:focus,
+.vr-stack input:focus {
+  border-color: var(--vr-primary);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(117, 86, 216, 0.18);
+}
+
+/* ---- Botones vr- ---- */
+
+.vr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 14px/1 inherit;
+  font-family: inherit;
+  color: #fff;
+  background: linear-gradient(180deg, #8463e6 0%, var(--vr-primary) 100%);
+  border: 1px solid var(--vr-primary-strong);
+  border-radius: 10px;
+  padding: 11px 16px;
+  cursor: pointer;
+  min-height: 44px;
+  transition: filter 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+  box-shadow: 0 6px 14px -8px rgba(99, 68, 198, 0.7);
+}
+
+.vr-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: 0 8px 18px -8px rgba(99, 68, 198, 0.8);
+}
+
+.vr-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.vr-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vr-btn-ghost {
+  background: #fff;
+  color: var(--vr-primary-strong);
+  border: 1px solid var(--vr-border);
+  box-shadow: none;
+  padding: 8px 12px;
+  min-height: 38px;
+  font-size: 13px;
+}
+
+.vr-btn-ghost:hover:not(:disabled) {
+  background: var(--vr-primary-soft);
+  border-color: #d3cbea;
+}
+
+/* ---- Alertas vr- ---- */
+
+.vr-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vr-alert-critical {
+  color: var(--vr-critical-ink);
+  background: var(--vr-critical-bg);
+  border: 1px solid var(--vr-critical-border);
+}
+
+.vr-alert-warn {
+  color: var(--vr-warn-ink);
+  background: var(--vr-warn-bg);
+  border: 1px solid var(--vr-warn-border);
+}
+
+.vr-config-banner {
+  position: relative;
+  z-index: 10;
+  max-width: 520px;
+  margin: 16px auto 0;
+  padding: 10px 14px;
+}
+
+.vr-config-banner code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+/* ---- Splash de carga ---- */
+
+.vr-splash {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--vr-muted);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* ---- Shell ERP (tras autenticar) ---- */
+
+.vr-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(900px 420px at 0% -10%, rgba(117, 86, 216, 0.08), transparent 60%),
+    #f7f5fb;
+}
+
+.vr-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--vr-border);
+}
+
+.vr-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 800 16px Manrope, sans-serif;
+  letter-spacing: -0.4px;
+  color: var(--vr-ink);
+}
+
+.vr-topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.vr-topbar-user > span {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--vr-muted);
+}
+
+.vr-home {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  padding: 40px 20px 56px;
+}
+
+.vr-home h1 {
+  font: 800 26px/1.2 Manrope, sans-serif;
+  letter-spacing: -0.6px;
+  color: var(--vr-ink);
+}
+
+.vr-home > p {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--vr-muted);
+}
+
+.vr-modulos {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.vr-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid var(--vr-border);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(28, 24, 48, 0.04);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+
+.vr-card:hover {
+  transform: translateY(-2px);
+  border-color: #d3cbea;
+  box-shadow: 0 12px 26px -14px rgba(99, 68, 198, 0.35);
+}
+
+.vr-card-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  flex: none;
+  color: var(--vr-primary-strong);
+  background: var(--vr-primary-soft);
+}
+
+.vr-card strong {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--vr-ink);
+}
+
+.vr-card p {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--vr-muted);
+}
+
+@media (max-width: 640px) {
+  .vr-topbar {
+    padding: 10px 14px;
+  }
+  .vr-topbar-user > span {
+    display: none;
+  }
+  .vr-home {
+    padding: 28px 16px 40px;
+  }
+}

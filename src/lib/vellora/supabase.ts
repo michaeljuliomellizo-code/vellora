@@ -4,9 +4,15 @@
      y el nuevo NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (misma llave, otro nombre).
    · Sin credenciales → cliente demo en memoria con el mismo subconjunto de API,
      de modo que TODO el código de la app funciona igual en ambos modos.
-   · La SUPABASE_SERVICE_ROLE_KEY jamás se usa aquí: es secreta y solo servidor. */
+   · La SUPABASE_SERVICE_ROLE_KEY jamás se usa aquí: es secreta y solo servidor.
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+   CAMBIO CLAVE (fix del bucle de login): el cliente real ahora se crea con
+   createBrowserClient de @supabase/ssr, que guarda la sesión en COOKIES en vez
+   de localStorage. Así la sesión es visible para Server Components y para
+   proxy.ts, y el flujo login → dashboard ya no rebota. */
+
+import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createDemoClient } from "./demo-client";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -31,9 +37,11 @@ let realClient: SupabaseClient | null = null;
 
 function getRealClient(): SupabaseClient {
   if (!realClient) {
-    realClient = createClient(SUPABASE_URL as string, SUPABASE_ANON_KEY as string, {
-      auth: { persistSession: true, autoRefreshToken: true },
-    });
+    // Sesión en cookies: la ven el servidor y el proxy (Next 16).
+    realClient = createBrowserClient(
+      SUPABASE_URL as string,
+      SUPABASE_ANON_KEY as string
+    ) as unknown as SupabaseClient;
   }
   return realClient;
 }

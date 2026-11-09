@@ -117,7 +117,21 @@ export type BookingResult = {
 async function realLoadData(slug: string): Promise<PublicBookingData> {
   const sb = supabaseBrowser();
   const { data, error } = await sb.rpc("public_booking_data", { p_slug: slug });
-  if (error) return { ok: false, message: error.message, settings: null, services: [], employees: [] };
+  if (error) {
+    /* FIX: si las RPC de reservas públicas no existen en la BD (se crean con
+       vellora-sql-v10-reservas-publicas.sql), PostgREST responde PGRST202
+       "Could not find the function ... in the schema cache". Mostramos una
+       guía clara en lugar del error técnico. */
+    const code = (error as { code?: string }).code ?? "";
+    if (code === "PGRST202" || code === "404" || /could not find the function/i.test(error.message)) {
+      return {
+        ok: false,
+        message: "Las funciones de reservas públicas no están creadas en la base de datos. Ejecuta el script vellora-sql-v10-reservas-publicas.sql en Supabase (SQL Editor) y recarga esta página.",
+        settings: null, services: [], employees: [],
+      };
+    }
+    return { ok: false, message: error.message, settings: null, services: [], employees: [] };
+  }
   const d = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
   if (!d || d.ok !== true) {
     return { ok: false, message: String(d?.message ?? "No encontramos esta página de reservas."), settings: null, services: [], employees: [] };
@@ -189,7 +203,11 @@ async function demoLoadData(slug: string): Promise<PublicBookingData> {
   const db = demoDb();
   const row = db.booking_settings.find((b) => b.slug === slug.toLowerCase().trim());
   if (!row) {
-    return { ok: false, message: "No encontramos esta página de reservas.", settings: null, services: [], employees: [] };
+    return {
+      ok: false,
+      message: "No encontramos esta página de reservas. (Estás en modo demo, sin Supabase: la página de ejemplo es /r/bella-esencia.)",
+      settings: null, services: [], employees: [],
+    };
   }
   const catNames = new Map<string, string>();
   // El dataset demo no incluye service_categories; usar la etiqueta del servicio si existe

@@ -15,6 +15,7 @@ import {
   loadAvailableSlots, loadPublicBookingData, normalizeHours, waLink,
 } from "@/lib/vellora/public-booking";
 import type { PublicBookingData, PublicService, Slot } from "@/lib/vellora/public-booking";
+import { IS_DEMO } from "@/lib/vellora/supabase";
 import { formatCOP } from "@/lib/vellora/format";
 
 type Phase = "loading" | "ready" | "closed" | "error";
@@ -204,7 +205,25 @@ export default function PublicBookingClient({ slug }: { slug: string }) {
         <div className="pb-loader-inner" style={{ maxWidth: 420, padding: 20 }}>
           <AlertCircle size={34} style={{ color: "#c05050", margin: "0 auto 12px", display: "block" }} />
           <b style={{ display: "block", marginBottom: 6, color: "#241b3a" }}>Página no disponible</b>
-          {errMsg}
+          <div style={{ fontSize: 14, color: "#5c5470" }}>{errMsg}</div>
+          <div style={{ marginTop: 12, fontSize: 12, color: "#8a819e" }}>
+            Dirección consultada: <b>/r/{slug}</b>
+          </div>
+          {IS_DEMO && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#a8720d" }}>
+              Estás en modo demo (sin credenciales de Supabase). La página de ejemplo es <b>/r/bella-esencia</b>.
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void load()}
+            style={{
+              marginTop: 16, padding: "9px 18px", borderRadius: 10, border: "none",
+              background: "#7556d8", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            Reintentar
+          </button>
         </div>
       </div>
     );

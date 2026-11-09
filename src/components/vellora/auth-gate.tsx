@@ -1,15 +1,16 @@
 "use client";
 
 /* VelloRa ERP — AuthGate: portada de acceso.
-   Login con Supabase Auth real (signInWithPassword). */
+   Login con Supabase Auth real (signInWithPassword).
+   Tras autenticar SOLO notifica al padre (onAuthenticated): la navegación
+   la hace el padre, una única vez. Aquí NO hay router.refresh() — era la
+   causa de que /dashboard se cargara 3 veces al iniciar sesión. */
 
 import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
 import { LogIn, Loader2, Scissors, HeartPulse } from "lucide-react";
 import { supabaseBrowser } from "@/lib/vellora/supabase";
 
 export default function AuthGate({ onAuthenticated }: { onAuthenticated: () => void }) {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -26,10 +27,10 @@ export default function AuthGate({ onAuthenticated }: { onAuthenticated: () => v
         setErr(error.message);
         return;
       }
+      // Una sola notificación → el padre navega UNA vez a /dashboard.
       onAuthenticated();
-      router.refresh();
     },
-    [onAuthenticated, router]
+    [onAuthenticated]
   );
 
   return (

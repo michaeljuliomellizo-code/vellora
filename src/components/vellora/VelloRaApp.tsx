@@ -1,11 +1,14 @@
 "use client";
 
 /* VelloRa ERP — Orquestador de la SPA.
-   Gestiona sesión → AuthGate → AppShell + vista activa según permisos del perfil. */
+   Gestión sesión → AuthGate → AppShell + vista activa según permisos del perfil.
+   FIX: si hay sesión válida pero la organización/perfil no existe en BD,
+   se muestra una pantalla explicativa ("sin-config") en vez del login,
+   que causaba la sensación de bucle login → dashboard → login. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import AuthGate from "./AuthGate";
+import AuthGate from "./auth-gate";
 import AppShell from "./AppShell";
 import DashboardClient from "./DashboardClient";
 import AgendaView from "./modules/AgendaView";
@@ -15,6 +18,7 @@ import VentasView from "./modules/VentasView";
 import ServiciosView from "./modules/ServiciosView";
 import ProfesionalesView from "./modules/ProfesionalesView";
 import InventarioView from "./modules/InventarioView";
+import ProveedoresView from "./modules/ProveedoresView";
 import ComprasView from "./modules/ComprasView";
 import ConsumoInternoView from "./modules/ConsumoInternoView";
 import NominaView from "./modules/NominaView";
@@ -26,11 +30,11 @@ import ConfiguracionView from "./modules/ConfiguracionView";
 import { supabaseBrowser } from "@/lib/vellora/supabase";
 import { getOrganizationContext } from "@/lib/vellora/organization";
 import { fetchNotifications } from "@/lib/vellora/queries";
-import { can, ROLE_LANDING } from "@/lib/vellora/permissions";
+import { can, ROLE_LANDING, planAllowsModule } from "@/lib/vellora/permissions";
 import type { AppNotification, ModuleKey, OrganizationContext } from "@/lib/vellora/types";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, LogOut, RefreshCw } from "lucide-react";
 
-type Phase = "checking" | "login" | "ready";
+type Phase = "checking" | "login" | "ready" | "sin-config";
 
 export default function VelloRaApp() {
   const router = useRouter();
@@ -38,6 +42,7 @@ export default function VelloRaApp() {
   const [ctx, setCtx] = useState<OrganizationContext | null>(null);
   const [view, setView] = useState<ModuleKey>("dashboard");
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [userEmail, setUserEmail] = useState<string>("");
 
   /* Cargar sesión y contexto */
   const refreshContext = useCallback(async () => {
@@ -49,11 +54,14 @@ export default function VelloRaApp() {
       setPhase("login");
       return;
     }
+    setUserEmail(data.user.email ?? "");
+
     try {
       const context = await getOrganizationContext();
       if (!context) {
+        /* Hay sesión, pero el usuario no tiene organización/rol en BD */
         setCtx(null);
-        setPhase("login");
+        setPhase("sin-config");
         return;
       }
       setCtx(context);
@@ -70,7 +78,7 @@ export default function VelloRaApp() {
       setPhase("ready");
     } catch {
       setCtx(null);
-      setPhase("login");
+      setPhase("sin-config");
     }
   }, []);
 
@@ -101,6 +109,11 @@ export default function VelloRaApp() {
         setView("dashboard");
         return;
       }
+      /* Módulos no incluidos en el plan actual → vuelve a la landing del perfil */
+      if (!planAllowsModule(ctx.subscription?.plan?.plan_key ?? "", target)) {
+        setView(ROLE_LANDING[roleKey] as ModuleKey);
+        return;
+      }
       if (can(ctx.permissions, target, "can_view")) {
         setView(target as ModuleKey);
       } else {
@@ -121,6 +134,7 @@ export default function VelloRaApp() {
       case "servicios": return <ServiciosView ctx={ctx} />;
       case "profesionales": return <ProfesionalesView ctx={ctx} />;
       case "inventario": return <InventarioView ctx={ctx} />;
+      case "proveedores": return <ProveedoresView ctx={ctx} />;
       case "compras": return <ComprasView ctx={ctx} />;
       case "consumo": return <ConsumoInternoView ctx={ctx} />;
       case "nomina": return <NominaView ctx={ctx} />;
@@ -139,6 +153,47 @@ export default function VelloRaApp() {
         <div style={{ textAlign: "center" }}>
           <Loader2 size={26} className="animate-spin" style={{ color: "#7556d8", margin: "0 auto 12px", display: "block" }} />
           <div style={{ fontSize: 13, color: "#8d899e" }}>Iniciando VelloRa ERP…</div>
+        </div>
+      </main>
+    );
+  }
+
+  /* FIX: sesión válida pero sin organización/perfil en la base de datos.
+     Antes esto caía en AuthGate y parecía un bucle de login. */
+  if (phase === "sin-config") {
+    return (
+      <main className="vr-root" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24, background: "#f6f5fa" }}>
+        <div style={{ width: "100%", maxWidth: 480, background: "#ffffff", border: "1px solid #e6e3f0", borderRadius: 16, padding: 28, boxShadow: "0 10px 30px rgba(28,15,66,0.08)", textAlign: "center" }}>
+          <div style={{ width: 48, height: 48, borderRadius: 999, background: "#f3effc", display: "grid", placeItems: "center", margin: "0 auto 16px" }}>
+            <AlertTriangle size={24} style={{ color: "#7556d8" }} />
+          </div>
+          <h1 style={{ fontSize: 20, fontWeight: 800, color: "#1c0f42", margin: 0 }}>
+            Cuenta sin configuración inicial
+          </h1>
+          <p style={{ fontSize: 14, color: "#5b5670", lineHeight: 1.6, marginTop: 10 }}>
+            Tu sesión inició correctamente{userEmail ? <> como <strong>{userEmail}</strong></> : null}, pero tu
+            usuario todavía no tiene organización y rol asignados en la base de datos, por lo que
+            VelloRa no puede cargar tu espacio de trabajo.
+          </p>
+          <p style={{ fontSize: 12.5, color: "#8d899e", lineHeight: 1.6, marginTop: 6 }}>
+            Esto se resuelve creando la organización y el perfil del usuario (configuración inicial en Supabase).
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 20, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => void refreshContext()}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#7556d8", color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            >
+              <RefreshCw size={15} /> Reintentar
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSignOut()}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: "#5b5670", border: "1px solid #e6e3f0", borderRadius: 10, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            >
+              <LogOut size={15} /> Cerrar sesión
+            </button>
+          </div>
         </div>
       </main>
     );

@@ -15,6 +15,7 @@ export type ModuleKey =
   | "servicios"
   | "profesionales"
   | "inventario"
+  | "proveedores"
   | "compras"
   | "consumo"
   | "nomina"
@@ -229,6 +230,9 @@ export type ServiceOrder = {
   /* derivados */
   payment_method: string | null; // método del último pago registrado
   kind: "servicio" | "producto" | "mixto"; // según items de la orden
+  /** Líneas de la venta (service_order_items): 1 orden puede llevar N ítems,
+      p.ej. Manicure + Pedicure + venta de un shampoo. */
+  items?: ServiceOrderItem[];
 };
 
 /** Alias histórico usado por las vistas. */

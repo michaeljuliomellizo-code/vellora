@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, Plus, AlertTriangle } from "lucide-react";
-import type { OrganizationContext, Product } from "@/lib/vellora/types";
+import type { OrganizationContext, Product, Supplier } from "@/lib/vellora/types";
 import { fetchProducts } from "@/lib/vellora/queries";
 import { formatCOP } from "@/lib/vellora/format";
 import { can } from "@/lib/vellora/permissions";
@@ -15,6 +15,7 @@ const UNIDADES = ["unidad", "litros", "mililitros", "gramos", "kilogramos", "met
 
 export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -31,13 +32,27 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
   const [fStock, setFStock] = useState(10);
   const [fMin, setFMin] = useState(6);
   const [fUnit, setFUnit] = useState("unidad");
+  const [fBarcode, setFBarcode] = useState("");
+  const [fSupplierId, setFSupplierId] = useState("");
 
   const canCreate = can(ctx.permissions, "inventario", "can_create");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setProducts(await fetchProducts(ctx.organizationId));
+      const sb = supabaseBrowser();
+      const [prod, sup] = await Promise.all([
+        fetchProducts(ctx.organizationId),
+        sb
+          .from("suppliers")
+          .select("*")
+          .eq("organization_id", ctx.organizationId)
+          .eq("active", true)
+          .order("name"),
+      ]);
+      setProducts(prod);
+      if (sup.error) throw new Error(sup.error.message);
+      setSuppliers(((sup.data ?? []) as unknown) as Supplier[]);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No fue posible cargar inventario");
@@ -69,16 +84,19 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
     }
     setSaving(true);
     setError("");
+    const supplier = suppliers.find((s) => s.id === fSupplierId);
     const sb = supabaseBrowser();
     const { error: insErr } = await sb.from("products").insert({
       organization_id: ctx.organizationId,
       sku: fSku.trim() || `VEL-${Date.now().toString().slice(-6)}`,
+      barcode: fBarcode.trim() || null,
       name: fName.trim(),
       category: fCategory,
       cost: fCost,
       sale_price: fPrice,
       stock: fStock,
       minimum_stock: fMin,
+      supplier_name: supplier?.name ?? null,
       unit: fUnit,
       active: true,
     });
@@ -88,7 +106,7 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
       return;
     }
     setShowNew(false);
-    setFName(""); setFSku("");
+    setFName(""); setFSku(""); setFBarcode(""); setFSupplierId("");
     setNotice("Producto creado correctamente.");
     await load();
   }
@@ -171,6 +189,8 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
                 <tr>
                   <th>Producto</th>
                   <th>SKU</th>
+                  <th>Código de barras</th>
+                  <th>Proveedor</th>
                   <th>Categoría</th>
                   <th>Costo</th>
                   <th>Precio</th>
@@ -186,6 +206,8 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
                     <tr key={p.id}>
                       <td><strong>{p.name}</strong></td>
                       <td className="vr-muted">{p.sku ?? "—"}</td>
+                      <td className="vr-muted">{p.barcode ?? "—"}</td>
+                      <td>{p.supplier_name ?? "—"}</td>
                       <td><span className="vr-pill vr-pill-gray">{p.category ?? "—"}</span></td>
                       <td>{formatCOP(p.cost)}</td>
                       <td><strong>{formatCOP(p.sale_price)}</strong></td>
@@ -219,6 +241,17 @@ export default function InventarioView({ ctx }: { ctx: OrganizationContext }) {
           </Field>
           <Field label="SKU">
             <input value={fSku} onChange={(e) => setFSku(e.target.value)} placeholder="VEL-019" />
+          </Field>
+          <Field label="Código de barras">
+            <input value={fBarcode} onChange={(e) => setFBarcode(e.target.value)} placeholder="Ej. 7701234567890" maxLength={60} />
+          </Field>
+          <Field label="Proveedor">
+            <select value={fSupplierId} onChange={(e) => setFSupplierId(e.target.value)}>
+              <option value="">Sin proveedor</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
           </Field>
           <Field label="Categoría">
             <select value={fCategory} onChange={(e) => setFCategory(e.target.value)}>

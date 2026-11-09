@@ -5,7 +5,7 @@
    líneas de productos con cantidad y costo unitario, y crea una sola orden con
    todas. Estados reales del CHECK: draft / received / cancelled. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, Plus, Trash2 } from "lucide-react";
 import type { OrganizationContext, Product, Purchase, PurchaseItem, Supplier } from "@/lib/vellora/types";
 import { fetchProducts } from "@/lib/vellora/queries";
@@ -14,6 +14,22 @@ import { supabaseBrowser } from "@/lib/vellora/supabase";
 import { PageHeader, StatusPill, EmptyState, Modal, Field, FormGrid } from "../ui-bits";
 
 type PurchaseLine = { product_id: string; name: string; qty: number; cost: number };
+
+/* Campos del formulario manual de producto: espejo 1:1 de la tabla products */
+type ManualProduct = {
+  name: string; sku: string; barcode: string; category: string; brand: string;
+  cost: string; sale_price: string; initial_stock: string; minimum_stock: string;
+  unit: string; lot: string; expires_at: string; location: string;
+};
+
+const EMPTY_MANUAL: ManualProduct = {
+  name: "", sku: "", barcode: "", category: "Cabello", brand: "",
+  cost: "", sale_price: "", initial_stock: "0", minimum_stock: "0",
+  unit: "unidad", lot: "", expires_at: "", location: "",
+};
+
+const UNIDADES = ["unidad", "litros", "mililitros", "gramos", "kilogramos", "metros", "cajas", "paquetes"];
+const CATEGORIAS = ["Cabello", "Uñas", "Rostro", "Spa", "Insumos"];
 
 export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -33,6 +49,26 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
   const [fQty, setFQty] = useState("1");
   const [fCost, setFCost] = useState("");
   const [lines, setLines] = useState<PurchaseLine[]>([]);
+
+  /* Alta manual de producto (se guarda en products y queda en el inventario) */
+  const [showNewProduct, setShowNewProduct] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [manual, setManual] = useState<ManualProduct>(EMPTY_MANUAL);
+
+  /* El selector de productos solo muestra los del proveedor elegido
+     (products.supplier_name = suppliers.name; comparación tolerante). */
+  const selectedSupplier = suppliers.find((s) => s.id === fSupplierId) ?? null;
+  const supplierProducts = useMemo(() => {
+    if (!selectedSupplier) return [];
+    const key = selectedSupplier.name.trim().toLowerCase();
+    return products
+      .filter(
+        (p) =>
+          (p.supplier_name ?? "").trim().toLowerCase() === key &&
+          p.active !== false
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, suppliers, fSupplierId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +112,58 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
     setFQty("1");
     setFCost("");
     setLines([]);
+  }
+
+  async function saveManualProduct() {
+    if (!selectedSupplier) {
+      setError("Selecciona el proveedor primero.");
+      return;
+    }
+    if (!manual.name.trim()) {
+      setError("El nombre del producto es obligatorio.");
+      return;
+    }
+    setSavingProduct(true);
+    setError("");
+    const sb = supabaseBrowser();
+    const payload = {
+      organization_id: ctx.organizationId,
+      sku: manual.sku.trim() || `VEL-${Date.now().toString().slice(-6)}`,
+      barcode: manual.barcode.trim() || null,
+      name: manual.name.trim(),
+      category: manual.category || null,
+      brand: manual.brand.trim() || null,
+      cost: Number(manual.cost) || 0,
+      sale_price: Number(manual.sale_price) || 0,
+      stock: Number(manual.initial_stock) || 0,
+      minimum_stock: Number(manual.minimum_stock) || 0,
+      supplier_name: selectedSupplier.name,
+      lot: manual.lot.trim() || null,
+      expires_at: manual.expires_at || null,
+      location: manual.location.trim() || null,
+      unit: manual.unit,
+      active: true,
+    };
+    const { data, error: insErr } = await sb
+      .from("products")
+      .insert(payload)
+      .select("id")
+      .single();
+    if (insErr || !data) {
+      setSavingProduct(false);
+      setError(`No fue posible crear el producto: ${insErr?.message ?? "sin id"}`);
+      return;
+    }
+    const newId = (data as unknown as { id: string }).id;
+    const created = { id: newId, ...payload } as unknown as Product;
+    setProducts((ps) => [...ps, created]);
+    setSavingProduct(false);
+    setShowNewProduct(false);
+    setManual(EMPTY_MANUAL);
+    /* Deja el producto seleccionado y su costo precargado en la orden */
+    setFProductId(newId);
+    setFCost(payload.cost ? String(payload.cost) : "");
+    setNotice(`Producto "${payload.name}" creado y agregado al inventario. Indica la cantidad y pulsa «Agregar».`);
   }
 
   function addLine() {
@@ -292,10 +380,10 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
           </Field>
         </FormGrid>
 
-        {/* Constructor de líneas: varios artículos por orden */}
+        {/* Constructor de líneas: los productos del proveedor elegido */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", margin: "4px 0 12px" }}>
           <div style={{ flex: "2 1 200px" }}>
-            <Field label="Producto">
+            <Field label="Producto (del proveedor)">
               <select
                 value={fProductId}
                 onChange={(e) => {
@@ -303,10 +391,19 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
                   const prod = products.find((p) => p.id === e.target.value);
                   setFCost(prod ? String(prod.cost) : "");
                 }}
+                disabled={!fSupplierId}
               >
-                <option value="">Seleccionar…</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} · costo {formatCOP(p.cost)}</option>
+                <option value="">
+                  {!fSupplierId
+                    ? "Primero elige un proveedor…"
+                    : supplierProducts.length === 0
+                      ? "Sin productos asociados — agrégalos manualmente"
+                      : "Seleccionar…"}
+                </option>
+                {supplierProducts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · stock {p.stock} · costo {formatCOP(p.cost)}
+                  </option>
                 ))}
               </select>
             </Field>
@@ -321,10 +418,51 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
               <input type="number" min="0" step="100" value={fCost} onChange={(e) => setFCost(e.target.value)} />
             </Field>
           </div>
-          <button className="vr-btn-secondary" onClick={addLine} style={{ height: 40 }}>
+          <button className="vr-btn-secondary" onClick={addLine} disabled={!fProductId} style={{ height: 40 }}>
             <Plus size={14} /> Agregar
           </button>
         </div>
+
+        {!fSupplierId ? (
+          <p className="vr-muted" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
+            Selecciona un proveedor: el listado de productos mostrará solo los asociados a él (productos con su nombre como proveedor en Inventario).
+          </p>
+        ) : supplierProducts.length === 0 ? (
+          <div className="vr-alert vr-alert-warning" style={{ margin: "0 0 12px" }}>
+            <span>
+              <strong>{selectedSupplier?.name}</strong> aún no tiene productos asociados. Agrégalos manualmente: se guardan en la tabla
+              de productos y quedan en el inventario con este proveedor.
+            </span>
+            <button
+              className="vr-btn vr-btn-sm"
+              style={{ marginLeft: 10, flexShrink: 0 }}
+              onClick={() => {
+                setManual(EMPTY_MANUAL);
+                setError("");
+                setShowNewProduct(true);
+              }}
+            >
+              <Plus size={12} /> Agregar producto manualmente
+            </button>
+          </div>
+        ) : (
+          <p className="vr-muted" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
+            {supplierProducts.length} producto(s) de <strong>{selectedSupplier?.name}</strong>. Si falta alguno, puedes
+            {" "}
+            <button
+              type="button"
+              style={{ background: "transparent", border: "none", padding: 0, color: "#7556d8", fontWeight: 700, cursor: "pointer", textDecoration: "underline", fontSize: "inherit" }}
+              onClick={() => {
+                setManual(EMPTY_MANUAL);
+                setError("");
+                setShowNewProduct(true);
+              }}
+            >
+              agregarlo manualmente
+            </button>
+            .
+          </p>
+        )}
 
         {lines.length === 0 ? (
           <p className="vr-muted" style={{ fontSize: 12.5, margin: "0 0 12px" }}>
@@ -395,6 +533,70 @@ export default function ComprasView({ ctx }: { ctx: OrganizationContext }) {
             </table>
           </div>
         )}
+      </Modal>
+
+      {/* Alta manual de producto: los campos corresponden 1:1 a la tabla products.
+          Se guarda con el proveedor elegido y queda disponible en Inventario. */}
+      <Modal
+        open={showNewProduct}
+        title={`Nuevo producto · ${selectedSupplier?.name ?? ""}`}
+        onClose={() => setShowNewProduct(false)}
+        width={640}
+      >
+        <FormGrid>
+          <Field label="Nombre *">
+            <input value={manual.name} onChange={(e) => setManual((m) => ({ ...m, name: e.target.value }))} placeholder="Ej. Shampoo hidratante 400ml" maxLength={120} />
+          </Field>
+          <Field label="SKU">
+            <input value={manual.sku} onChange={(e) => setManual((m) => ({ ...m, sku: e.target.value }))} placeholder="VEL-019" />
+          </Field>
+          <Field label="Código de barras">
+            <input value={manual.barcode} onChange={(e) => setManual((m) => ({ ...m, barcode: e.target.value }))} placeholder="Ej. 7701234567890" maxLength={60} />
+          </Field>
+          <Field label="Categoría">
+            <select value={manual.category} onChange={(e) => setManual((m) => ({ ...m, category: e.target.value }))}>
+              {CATEGORIAS.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+          </Field>
+          <Field label="Marca">
+            <input value={manual.brand} onChange={(e) => setManual((m) => ({ ...m, brand: e.target.value }))} placeholder="Ej. Kerastase" maxLength={80} />
+          </Field>
+          <Field label="Costo (COP)">
+            <input type="number" min={0} step={100} value={manual.cost} onChange={(e) => setManual((m) => ({ ...m, cost: e.target.value }))} />
+          </Field>
+          <Field label="Precio venta (COP)">
+            <input type="number" min={0} step={100} value={manual.sale_price} onChange={(e) => setManual((m) => ({ ...m, sale_price: e.target.value }))} />
+          </Field>
+          <Field label="Stock inicial">
+            <input type="number" min={0} value={manual.initial_stock} onChange={(e) => setManual((m) => ({ ...m, initial_stock: e.target.value }))} />
+          </Field>
+          <Field label="Stock mínimo">
+            <input type="number" min={0} value={manual.minimum_stock} onChange={(e) => setManual((m) => ({ ...m, minimum_stock: e.target.value }))} />
+          </Field>
+          <Field label="Unidad">
+            <select value={manual.unit} onChange={(e) => setManual((m) => ({ ...m, unit: e.target.value }))}>
+              {UNIDADES.map((u) => (<option key={u} value={u}>{u}</option>))}
+            </select>
+          </Field>
+          <Field label="Lote">
+            <input value={manual.lot} onChange={(e) => setManual((m) => ({ ...m, lot: e.target.value }))} placeholder="Ej. L-2026-04" maxLength={40} />
+          </Field>
+          <Field label="Vence">
+            <input type="date" value={manual.expires_at} onChange={(e) => setManual((m) => ({ ...m, expires_at: e.target.value }))} />
+          </Field>
+          <Field label="Ubicación">
+            <input value={manual.location} onChange={(e) => setManual((m) => ({ ...m, location: e.target.value }))} placeholder="Ej. Bodega Chapinero·A2" maxLength={80} />
+          </Field>
+        </FormGrid>
+        <p className="vr-muted" style={{ fontSize: 12, margin: "0 0 14px" }}>
+          Proveedor: <strong>{selectedSupplier?.name ?? "—"}</strong> (se guarda en el campo supplier_name del producto). El stock de la orden se suma al recibirla.
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button className="vr-btn-secondary" onClick={() => setShowNewProduct(false)}>Cancelar</button>
+          <button className="vr-btn" onClick={() => void saveManualProduct()} disabled={savingProduct}>
+            {savingProduct ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Guardar y usar en la orden
+          </button>
+        </div>
       </Modal>
     </div>
   );

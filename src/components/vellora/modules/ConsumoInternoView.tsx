@@ -196,7 +196,7 @@ export default function ConsumoInternoView({ ctx }: { ctx: OrganizationContext }
               </Field>
             </div>
             <button className="vr-btn" onClick={() => void registerConsumption()} disabled={saving} style={{ height: 40 }}>
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />} Registrar consumo
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={5} />} Registrar consumo
             </button>
           </div>
         ) : (
