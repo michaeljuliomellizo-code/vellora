@@ -140,9 +140,9 @@ for (const role of organization_roles) {
 
 /* Planes (vellora_plans real: sin columnas de límites) */
 const vellora_plans: Plan[] = [
-  { id: "plan-esencial", plan_key: "esencial", name: "Esencial", description: "Para salones que inician: 1 sede y equipo pequeño.", price_monthly: 89000, active: true, created_at: at(-400, 9) },
-  { id: "plan-profesional", plan_key: "profesional", name: "Profesional", description: "Salones en crecimiento: hasta 3 sedes y 15 profesionales.", price_monthly: 189000, active: true, created_at: at(-400, 9) },
-  { id: "plan-elite", plan_key: "elite", name: "Elite", description: "Cadenas y franquicias: límites ilimitados y soporte prioritario.", price_monthly: 349000, active: true, created_at: at(-400, 9) },
+  { id: "plan-esencial", plan_key: "esencial", name: "Esencial", description: "Para salones que inician: 1 sede y equipo pequeño.", price_monthly: 89900, active: true, created_at: at(-400, 9) },
+  { id: "plan-profesional", plan_key: "profesional", name: "Profesional", description: "Salones en crecimiento: hasta 3 sedes y 15 profesionales.", price_monthly: 149900, active: true, created_at: at(-400, 9) },
+  { id: "plan-elite", plan_key: "elite", name: "Elite", description: "Cadenas y franquicias: límites ilimitados y soporte prioritario.", price_monthly: 229900, active: true, created_at: at(-400, 9) },
 ];
 
 const organization_subscriptions: OrganizationSubscription[] = [
