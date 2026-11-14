@@ -170,7 +170,7 @@ export default function RegisterPage() {
                 required
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej. Tifany Angarita"
+                placeholder="Ingresa tu nombre completo"
                 className={inputCls}
               />
             </div>
